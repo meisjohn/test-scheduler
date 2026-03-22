@@ -31,6 +31,7 @@ function App() {
   const [placingActivity, setPlacingActivity] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [newTitle, setNewTitle] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [currentWeek, setCurrentWeek] = useState(getInitialWeek());
@@ -413,9 +414,6 @@ const exportSystemData = async () => {
             <div className="flex justify-between items-center mb-4" onClick={(e) => e.stopPropagation()}>
               <h2 className="font-black text-xl italic tracking-tighter uppercase">Planning</h2>
               <div className="flex items-center gap-1">
-                <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 hover:bg-slate-700 rounded-full text-slate-400">
-                  <Settings size={20} className={isSettingsOpen ? "text-blue-400" : ""} />
-                </button>
                 <button onClick={() => setIsSidebarOpen(false)} className="p-2 hover:bg-slate-700 rounded-full text-slate-400">
                   <ChevronLeft size={20} />
                 </button>
@@ -562,11 +560,20 @@ const exportSystemData = async () => {
                   </tr>
                 </thead>
                 <tbody>
-                {config.shiftConfigs.map((shift, sIdx) => (
+                {config.shiftConfigs
+                  .map((s, i) => ({ ...s, originalIndex: i }))
+                  .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''))
+                  .map((shift) => {
+                    const sIdx = shift.originalIndex;
+                    return (
                     <React.Fragment key={`shift-${sIdx}`}>
                     <tr className="bg-slate-900/50">
                         <td colSpan={8} className="p-2 pl-4 border-b border-slate-700">
-                          <div className="flex items-center gap-2 text-blue-400 font-black text-[10px] uppercase italic tracking-widest"><Clock size={12}/> {shift.name}</div>
+                          <div className="flex items-center gap-2 text-blue-400 font-black text-[10px] uppercase italic tracking-widest">
+                            <Clock size={12}/> 
+                            {shift.name}
+                            <span className="text-slate-600 not-italic font-normal ml-2">({shift.startTime} - {shift.endTime})</span>
+                          </div>
                         </td>
                     </tr>
                     {config.testStrings.map(stringName => (
@@ -638,7 +645,7 @@ const exportSystemData = async () => {
                         </tr>
                     ))}
                     </React.Fragment>
-                ))}
+                )})}
                 </tbody>
             </table>
           </main>
@@ -715,13 +722,28 @@ const exportSystemData = async () => {
         </div>
       )}
 
-      {/* CONFIGURATION SIDEBAR */}
-      {isSettingsOpen && (
-          <div className="absolute top-0 right-0 w-96 bottom-0 bg-slate-800 border-l border-slate-700 shadow-2xl p-6 z-30 flex flex-col animate-in slide-in-from-right duration-300">
-            <div className="flex justify-between items-center mb-6 text-white">
-              <h3 className="font-black italic text-blue-400 uppercase tracking-tighter">Week Config</h3>
-              <button onClick={() => setIsSettingsOpen(false)} className="text-slate-500 hover:text-white"><X size={20} /></button>
+      {/* RIGHT CONFIG SIDEBAR */}
+      <div className={`${isRightPanelOpen ? 'w-96 p-6' : 'w-12 py-4 items-center'} bg-slate-800 border-l border-slate-700 flex flex-col shadow-2xl z-20 overflow-hidden transition-all relative`}>
+        {!isRightPanelOpen && (
+          <button onClick={() => setIsRightPanelOpen(true)} className="p-2 hover:bg-slate-700 rounded-full text-slate-400">
+            <ChevronLeft size={20} />
+          </button>
+        )}
+
+        {isRightPanelOpen && (
+          <>
+            <div className="flex justify-between items-center mb-6 text-white shrink-0">
+              <h3 className="font-black italic text-blue-400 uppercase tracking-tighter text-xl">Configuration</h3>
+              <div className="flex items-center gap-1">
+                <button onClick={() => setIsSettingsOpen(true)} className="p-2 hover:bg-slate-700 rounded-full text-slate-400" title="System Settings">
+                  <Settings size={20} />
+                </button>
+                <button onClick={() => setIsRightPanelOpen(false)} className="p-2 hover:bg-slate-700 rounded-full text-slate-400">
+                  <ChevronRight size={20} />
+                </button>
+              </div>
             </div>
+
             <div className="flex-1 overflow-y-auto space-y-8 custom-scrollbar">
               <section className="space-y-4">
                  <div>
@@ -746,6 +768,34 @@ const exportSystemData = async () => {
                   </div>
                 ))}
               </section>
+              
+              <section className="border-t border-slate-700 pt-6">
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase">Shifts</label>
+                  {!config.isLocked && <button onClick={() => updateConfig({ shiftConfigs: [...config.shiftConfigs, { name: "New Shift", startTime: "09:00", endTime: "17:00" }] })} className="text-[10px] font-black text-blue-400 tracking-widest">+ ADD</button>}
+                </div>
+                {config.shiftConfigs.map((shift, i) => (
+                  <div key={i} className="mb-3 group bg-slate-900/30 p-2 rounded border border-slate-700/50 hover:border-slate-600 transition-colors">
+                    <div className="flex items-center justify-between mb-2">
+                        <input disabled={config.isLocked} className="w-full bg-transparent p-0 text-xs font-bold outline-none text-white placeholder-slate-600" value={shift.name} onChange={(e) => {
+                            const newShifts = [...config.shiftConfigs]; newShifts[i].name = e.target.value; setConfig({...config, shiftConfigs: newShifts});
+                        }} onBlur={() => updateConfig({ shiftConfigs: config.shiftConfigs })} />
+                         {!config.isLocked && <button className="text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 ml-2" onClick={() => updateConfig({ shiftConfigs: config.shiftConfigs.filter((_, idx) => idx !== i) })}><Trash2 size={14}/></button>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Clock size={12} className="text-slate-500" />
+                        <input type="time" disabled={config.isLocked} className="bg-slate-900 border border-slate-700 p-1.5 rounded text-[10px] text-white outline-none flex-1 text-center" value={shift.startTime} onChange={(e) => {
+                            const newShifts = [...config.shiftConfigs]; newShifts[i].startTime = e.target.value; setConfig({...config, shiftConfigs: newShifts});
+                        }} onBlur={() => updateConfig({ shiftConfigs: config.shiftConfigs })} />
+                        <span className="text-slate-600">-</span>
+                        <input type="time" disabled={config.isLocked} className="bg-slate-900 border border-slate-700 p-1.5 rounded text-[10px] text-white outline-none flex-1 text-center" value={shift.endTime} onChange={(e) => {
+                            const newShifts = [...config.shiftConfigs]; newShifts[i].endTime = e.target.value; setConfig({...config, shiftConfigs: newShifts});
+                        }} onBlur={() => updateConfig({ shiftConfigs: config.shiftConfigs })} />
+                    </div>
+                  </div>
+                ))}
+              </section>
+
               <section className="border-t border-slate-700 pt-6">
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase">Locations</label>
@@ -768,6 +818,19 @@ const exportSystemData = async () => {
                 </button>
               </section>
             </div>
+          </>
+        )}
+      </div>
+
+      {/* SYSTEM SETTINGS MODAL */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg p-8 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
+            <div className="flex justify-between items-center mb-6">
+                <h3 className="font-black italic text-white uppercase tracking-tighter text-2xl">System Settings</h3>
+                <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-slate-700 rounded-full text-slate-400"><X size={24} /></button>
+            </div>
+            
             <section className="border-t border-slate-700 pt-6">
               <div className="flex justify-between items-center mb-2">
                 <label className="text-[10px] font-black text-slate-500 uppercase">Company Holidays</label>
@@ -795,6 +858,7 @@ const exportSystemData = async () => {
                 </div>
               ))}
             </section>
+
             <section className="border-t border-slate-700 pt-6 mt-10">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-4">System Maintenance</label>
                 <div className="flex flex-col gap-2">
@@ -849,6 +913,7 @@ const exportSystemData = async () => {
                 </div>
             </section>
           </div>
+        </div>
       )}
     </div>
   );
