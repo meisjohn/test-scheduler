@@ -7,7 +7,10 @@ import {
   Lock, Unlock, FileText, Link as LinkIcon, Save, ExternalLink, Plus 
 } from 'lucide-react';
 
-const socket = io('http://localhost:5000');
+const BACKEND_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+
+
+const socket = io(BACKEND_URL);
 
 const getInitialWeek = () => {
   const now = new Date();
@@ -66,7 +69,7 @@ function App() {
 
   const fetchData = async () => {
     try {
-      const res = await axios.get(`http://localhost:5000/api/activities/${currentWeek}`);
+      const res = await axios.get(BACKEND_URL + `/api/activities/${currentWeek}`);
       setActivities(res.data.activities || []);
       setConfig(res.data.config);
     } catch (err) { console.error("Fetch error:", err); }
@@ -74,7 +77,7 @@ function App() {
 
   const updateConfig = async (updates) => {
     const newConfig = { ...config, ...updates };
-    await axios.put(`http://localhost:5000/api/activities/config/${currentWeek}`, newConfig);
+    await axios.put(BACKEND_URL + `/api/activities/config/${currentWeek}`, newConfig);
     socket.emit('sync-work');
     fetchData();
   };
@@ -82,7 +85,7 @@ function App() {
   const deleteWeekConfig = async () => {
     if (!window.confirm("This will reset this week's strings/shifts and unstage all items. Proceed?")) return;
     try {
-      await axios.delete(`http://localhost:5000/api/activities/config/${currentWeek}`);
+      await axios.delete(BACKEND_URL + `/api/activities/config/${currentWeek}`);
       socket.emit('sync-work');
       fetchData();
       setIsSettingsOpen(false);
@@ -92,7 +95,7 @@ function App() {
   const moveActivity = async (id, updates) => {
     if (config?.isLocked && updates.status === 'scheduled') return;
     if (updates.status === 'scheduled') updates.weekIdentifier = currentWeek;
-    await axios.patch(`http://localhost:5000/api/activities/${id}`, updates);
+    await axios.patch(BACKEND_URL + `/api/activities/${id}`, updates);
     socket.emit('sync-work');
     fetchData();
   };
@@ -101,7 +104,7 @@ function App() {
     if (config.isLocked) return;
     const title = window.prompt("Enter activity title:");
     if (!title) return;
-    await axios.post('http://localhost:5000/api/activities', {
+    await axios.post(BACKEND_URL + '/api/activities', {
       title,
       status: 'scheduled',
       weekIdentifier: currentWeek,
@@ -116,7 +119,7 @@ function App() {
   const deleteActivity = async (id) => {
     if (config?.isLocked) return;
     if (!window.confirm("Delete permanently?")) return;
-    await axios.delete(`http://localhost:5000/api/activities/${id}`);
+    await axios.delete(BACKEND_URL + `/api/activities/${id}`);
     socket.emit('sync-work');
     fetchData();
     setSelectedActivity(null);
@@ -140,7 +143,7 @@ function App() {
       clone.order = null;
     } 
 
-    await axios.post('http://localhost:5000/api/activities', clone);
+    await axios.post(BACKEND_URL + '/api/activities', clone);
     socket.emit('sync-work');
     fetchData();
   };
@@ -148,7 +151,7 @@ function App() {
   const handleAddActivity = async (e) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
-    await axios.post('http://localhost:5000/api/activities', { title: newTitle, status: 'staged' });
+    await axios.post(BACKEND_URL + '/api/activities', { title: newTitle, status: 'staged' });
     setNewTitle("");
     socket.emit('sync-work');
     fetchData();
@@ -178,7 +181,7 @@ function App() {
   const saveAsGlobal = async () => {
     if (!window.confirm("Set this week's layout as the template for all NEW weeks?")) return;
     try {
-      await axios.put(`http://localhost:5000/api/activities/global/config`, {
+      await axios.put(BACKEND_URL + `/api/activities/global/config`, {
         testStrings: config.testStrings,
         locations: config.locations,
         shiftConfigs: config.shiftConfigs
@@ -189,7 +192,7 @@ function App() {
 
 const exportSystemData = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/activities/system/export');
+      const res = await axios.get(BACKEND_URL + '/api/activities/system/export');
       const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
@@ -206,7 +209,7 @@ const exportSystemData = async () => {
     reader.onload = async (event) => {
       try {
         const json = JSON.parse(event.target.result);
-        await axios.post('http://localhost:5000/api/activities/system/import', json);
+        await axios.post(BACKEND_URL + '/api/activities/system/import', json);
         alert("System Restore Complete!");
         window.location.reload(); // Hard refresh to sync everything
       } catch (err) { alert("Invalid Backup File"); }
@@ -219,7 +222,7 @@ const exportSystemData = async () => {
     if (!window.confirm(confirmMessage)) return;
 
     try {
-      const res = await axios.post('http://localhost:5000/api/activities/system/archive', {
+      const res = await axios.post(BACKEND_URL + '/api/activities/system/archive', {
         olderThanWeeks: archiveWeeks
       });
       
@@ -245,7 +248,7 @@ const exportSystemData = async () => {
     reader.onload = async (event) => {
       try {
         const json = JSON.parse(event.target.result);
-        const res = await axios.post('http://localhost:5000/api/activities/system/restore-archive', json);
+        const res = await axios.post(BACKEND_URL + '/api/activities/system/restore-archive', json);
         alert(`Restore Successful!\nMerged ${res.data.activitiesRestored} activities and ${res.data.configsRestored} week configs.`);
         fetchData(); // Refresh current view
       } catch (err) {
