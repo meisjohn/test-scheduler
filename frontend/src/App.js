@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import io from 'socket.io-client';
+import html2canvas from 'html2canvas';
 import { 
   Settings, ChevronLeft, ChevronRight, X, Trash2, RedoDot, 
-  Search, Clock, Calendar, Download, Copy, Edit3, MapPin, 
+  Search, Clock, Calendar, Download, Copy, Edit3, MapPin, FileSpreadsheet, Image, Clipboard,
   Lock, Unlock, FileText, Link as LinkIcon, Save, ExternalLink, Plus 
 } from 'lucide-react';
 
@@ -30,6 +31,7 @@ function App() {
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [placingActivity, setPlacingActivity] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const gridRef = useRef(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
   const [newTitle, setNewTitle] = useState("");
@@ -52,7 +54,8 @@ function App() {
       return {
         label: d.toLocaleDateString('en-US', { weekday: 'short' }),
         date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        fullDate: new Date(d) // <--- SURGICAL FIX: Ensure this is a Date object
+        fullDate: new Date(d), // <--- SURGICAL FIX: Ensure this is a Date object
+        dayIndex: offset // Store original 0-6 index for activity mapping
       };
     });
   }, [currentWeek]);
@@ -62,6 +65,11 @@ function App() {
       .filter(a => a.status === 'staged')
       .filter(a => a.title.toLowerCase().includes(searchTerm.toLowerCase()));
   }, [activities, searchTerm]);
+
+  const visibleWeekDates = useMemo(() => {
+    if (!config?.hideWeekends) return weekDates;
+    return weekDates.filter(d => d.dayIndex !== 5 && d.dayIndex !== 6); // 5=Sat, 6=Sun
+  }, [weekDates, config?.hideWeekends]);
 
   useEffect(() => {
     fetchData();
@@ -180,13 +188,47 @@ function App() {
     link.click();
   };
 
+  const exportToPNG = async () => {
+    if (!gridRef.current) return;
+    try {
+      const canvas = await html2canvas(gridRef.current, { 
+        backgroundColor: '#1e293b',
+        scale: 3, // High resolution for presentations
+        scrollX: 0, scrollY: 0 // Prevent scrolling artifacts
+      });
+      const link = document.createElement('a');
+      link.download = `Schedule_${currentWeek}.png`;
+      link.href = canvas.toDataURL();
+      link.click();
+    } catch (err) { console.error("Export PNG failed", err); }
+  };
+
+  const copyImageToClipboard = async (e) => {
+     if (!gridRef.current) return;
+     const x = e.clientX;
+     const y = e.clientY;
+     try {
+       const canvas = await html2canvas(gridRef.current, { 
+         backgroundColor: '#1e293b',
+         scale: 3,
+         scrollX: 0, scrollY: 0
+       });
+       canvas.toBlob(blob => {
+         navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+         setCopyFeedback({ visible: true, x, y });
+         setTimeout(() => setCopyFeedback(prev => ({ ...prev, visible: false })), 1000);
+       });
+     } catch (err) { console.error("Clipboard failed", err); }
+  };
+
   const saveAsGlobal = async () => {
     if (!window.confirm("Set this week's layout as the template for all NEW weeks?")) return;
     try {
       await axios.put(BACKEND_URL + `/api/activities/global/config`, {
         testStrings: config.testStrings,
         locations: config.locations,
-        shiftConfigs: config.shiftConfigs
+        shiftConfigs: config.shiftConfigs,
+        hideWeekends: config.hideWeekends
       });
       alert("Global Template Updated.");
     } catch (err) { console.error(err); }
@@ -504,7 +546,17 @@ const exportSystemData = async () => {
                             </div>
                         )}
                     </div>
-                    <button onClick={exportToCSV} className="bg-slate-800 border border-slate-700 px-4 py-2 rounded-lg text-xs font-black uppercase hover:bg-slate-700">Export CSV</button>
+                    <div className="flex bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
+                        <button onClick={exportToCSV} className="px-3 py-2 hover:bg-slate-700 border-r border-slate-700" title="Export CSV">
+                            <FileSpreadsheet size={16} className="text-emerald-400" />
+                        </button>
+                        <button onClick={exportToPNG} className="px-3 py-2 hover:bg-slate-700 border-r border-slate-700" title="Export PNG">
+                            <Image size={16} className="text-blue-400" />
+                        </button>
+                        <button onClick={copyImageToClipboard} className="px-3 py-2 hover:bg-slate-700" title="Copy Image">
+                            <Clipboard size={16} className="text-purple-400" />
+                        </button>
+                    </div>
                     {placingActivity && (
                         <div className="flex items-center gap-2">
                             <div className="text-[10px] font-black bg-yellow-500 text-slate-900 px-4 py-2 rounded-full flex items-center gap-2 animate-pulse">MOVE MODE</div>
@@ -533,22 +585,22 @@ const exportSystemData = async () => {
           </header>
 
           <main className={`flex-1 overflow-auto p-6 ${config.isLocked ? 'grayscale-[0.2]' : ''}`}>
-             <table className="w-full border-separate border-spacing-0 border border-slate-700 bg-slate-800 rounded-xl overflow-hidden shadow-2xl">
+             <table ref={gridRef} className="w-full table-fixed border-separate border-spacing-0 border border-slate-700 bg-slate-800 rounded-xl overflow-hidden shadow-2xl">
               <thead>
                   <tr className="bg-slate-950">
-                    <th className="p-4 border-b border-r border-slate-700 text-left text-[10px] font-black text-slate-500 uppercase w-44">Shift / String</th>
-                    {weekDates.map((day, idx) => {
+                    <th className={`p-4 border-b border-r border-slate-700 text-left font-black text-slate-500 uppercase w-44 ${config.isLocked ? 'text-sm' : 'text-[10px]'}`}>Shift / String</th>
+                    {visibleWeekDates.map((day, idx) => {
                       const isToday = checkIsToday(day.date);
                       const holiday = getHoliday(day.fullDate); // Pass the full Date object here
                       return (
-                        <th key={idx} className={`p-4 border-b border-r border-slate-700 text-center transition-colors 
+                        <th key={idx} className={`p-4 border-b border-r border-slate-700 text-center transition-colors
                           ${isToday ? 'bg-blue-500/10' : ''} 
                           ${holiday ? 'bg-orange-500/10' : ''}`}>
-                          <div className={`text-[10px] font-black uppercase mb-1 
+                          <div className={`font-black uppercase mb-1 ${config.isLocked ? 'text-xs' : 'text-[10px]'}
                             ${isToday ? 'text-blue-400' : holiday ? 'text-orange-400' : 'text-slate-500'}`}>
                             {day.label} {isToday && "• TODAY"}
                           </div>
-                          <div className="text-xs font-black text-white">{day.date}</div>
+                          <div className={`font-black text-white ${config.isLocked ? 'text-base' : 'text-xs'}`}>{day.date}</div>
                           {holiday && (
                             <div className="text-[8px] font-black text-orange-400 uppercase mt-1 truncate w-32 mx-auto" title={holiday.name}>
                               {holiday.name}
@@ -568,7 +620,7 @@ const exportSystemData = async () => {
                     return (
                     <React.Fragment key={`shift-${sIdx}`}>
                     <tr className="bg-slate-900/50">
-                        <td colSpan={8} className="p-2 pl-4 border-b border-slate-700">
+                        <td colSpan={1 + visibleWeekDates.length} className="p-2 pl-4 border-b border-slate-700">
                           <div className="flex items-center gap-2 text-blue-400 font-black text-[10px] uppercase italic tracking-widest">
                             <Clock size={12}/> 
                             {shift.name}
@@ -578,16 +630,17 @@ const exportSystemData = async () => {
                     </tr>
                     {config.testStrings.map(stringName => (
                         <tr key={`${stringName}-${sIdx}`} className="group hover:bg-slate-750/30">
-                        <td className="p-4 border-r border-b border-slate-700 bg-slate-850/30 text-[10px] font-black text-slate-300 uppercase leading-none">
-                            <div className="text-[10px] font-black text-slate-300 uppercase leading-none">{stringName}</div>
+                        <td className={`p-4 border-r border-b border-slate-700 bg-slate-850/30 font-black text-slate-300 uppercase leading-none ${config.isLocked ? 'text-sm' : 'text-[10px]'}`}>
+                            <div className={`font-black text-slate-300 uppercase leading-none ${config.isLocked ? 'text-sm' : 'text-[10px]'}`}>{stringName}</div>
                         </td>
-                        {[0, 1, 2, 3, 4, 5, 6].map(dayIdx => {
+                        {visibleWeekDates.map(dayObj => {
+                            const dayIdx = dayObj.dayIndex;
                             const isToday = checkIsToday(weekDates[dayIdx]?.fullDate);
                             const isHoliday = getHoliday(weekDates[dayIdx]?.fullDate);
                             return (
                                 <td
                                  key={dayIdx} 
-                                 className={`border-r border-b border-slate-700 p-2 h-28 w-48 align-top relative transition-all 
+                                 className={`border-r border-b border-slate-700 p-2 align-top relative transition-all ${config.isLocked ? 'h-auto' : 'h-auto min-h-[9rem] pb-8'}
                                              ${isToday ? 'bg-blue-500/5' : ''}
                                              ${isHoliday ? 'bg-orange-500/5' : ''}
                                              ${placingActivity && !config.isLocked ? 'hover:bg-blue-600/20 cursor-crosshair' : ''}`}
@@ -620,7 +673,7 @@ const exportSystemData = async () => {
                                     title={`Lead: ${act.lead || 'None'}\nLocation: ${act.location}\nPlan: ${act.testPlan || 'No details'}\nDoc URL: ${act.docUrl || 'None'}`}
                                     onClick={(e) => { e.stopPropagation(); if(!config.isLocked) setPlacingActivity(placingActivity?._id === act._id ? null : act); }} 
                                     onDoubleClick={(e) => { e.stopPropagation(); setSelectedActivity(act); }}
-                                    className={`p-2 rounded shadow-lg text-[10px] mb-1.5 cursor-pointer border transition-all relative group ${placingActivity?._id === act._id ? 'bg-yellow-500 border-yellow-400 text-slate-900' : `${getLocationColor(act.location)} text-white`}`}
+                                    className={`p-2 rounded shadow-lg mb-1.5 cursor-pointer border transition-all relative group ${config.isLocked ? 'text-xs' : 'text-[10px]'} ${placingActivity?._id === act._id ? 'bg-yellow-500 border-yellow-400 text-slate-900' : `${getLocationColor(act.location)} text-white`}`}
                                     >
                                         {/* HOVER ACTIONS (Overlays static icons when moused over) */}
                                         <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-blue-800 rounded pl-1 shadow-md">
@@ -632,8 +685,8 @@ const exportSystemData = async () => {
                                             <button onClick={(e) => { e.stopPropagation(); copyActivity(act, e); }} className="hover:text-yellow-400 p-0.5"><Copy size={10}/></button>
                                             {!config.isLocked && <button onClick={(e) => { e.stopPropagation(); unstageItem(act._id); }} className="hover:text-orange-400 p-0.5"><X size={10}/></button>}
                                         </div>
-                                        <div className="font-bold truncate pr-4">{act.title}</div>
-                                        <div className="flex justify-between items-center mt-1 text-[8px] font-black uppercase opacity-70">
+                                        <div className="font-bold whitespace-normal break-words pr-4">{act.title}</div>
+                                        <div className={`flex justify-between items-center mt-1 font-black uppercase opacity-70 ${config.isLocked ? 'text-[10px]' : 'text-[8px]'}`}>
                                             <span>{act.lead || 'TBD'}</span>
                                             <span className="bg-black/20 px-1 rounded">{act.location}</span>
                                         </div>
@@ -746,6 +799,16 @@ const exportSystemData = async () => {
 
             <div className="flex-1 overflow-y-auto space-y-8 custom-scrollbar">
               <section className="space-y-4">
+                 <div className="flex items-center justify-between border-b border-slate-700 pb-4">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Hide Weekends</label>
+                    <button 
+                        onClick={() => updateConfig({ hideWeekends: !config.hideWeekends })}
+                        className={`w-10 h-5 rounded-full transition-colors relative ${config.hideWeekends ? 'bg-blue-600' : 'bg-slate-700'}`}
+                    >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all shadow-sm ${config.hideWeekends ? 'left-6' : 'left-1'}`} />
+                    </button>
+                 </div>
+
                  <div>
                     <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Master Week URL</label>
                     <input className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs mt-1 text-blue-400 outline-none" value={config.externalDocUrl || ''} onChange={(e) => setConfig({...config, externalDocUrl: e.target.value})} placeholder="Link to documentation..." />

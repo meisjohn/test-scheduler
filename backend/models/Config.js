@@ -19,6 +19,7 @@ const ConfigSchema = new mongoose.Schema({
       { name: "Night Shift", startTime: "16:00", endTime: "00:00" }
     ] 
   },
+  hideWeekends: { type: Boolean, default: false },
   isLocked: { type: Boolean, default: false },
   notes: { type: String, default: "" },
   externalDocUrl: { type: String, default: "" }

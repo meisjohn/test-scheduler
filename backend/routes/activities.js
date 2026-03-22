@@ -23,7 +23,8 @@ router.get('/:week', async (req, res) => {
         testStrings: global.testStrings,
         locations: global.locations,
         shiftConfigs: global.shiftConfigs,
-        companyHolidays: global.companyHolidays
+        companyHolidays: global.companyHolidays,
+        hideWeekends: global.hideWeekends
       });
     }
     res.json({ activities, config });
@@ -141,10 +142,10 @@ router.put('/config/:week', async (req, res) => {
 router.put('/global/config', async (req, res) => {
   try {
     // Destructure companyHolidays from the request body
-    const { testStrings, locations, shiftConfigs, companyHolidays } = req.body;
+    const { testStrings, locations, shiftConfigs, companyHolidays, hideWeekends } = req.body;
     const updated = await GlobalConfig.findOneAndUpdate(
       {}, 
-      { testStrings, locations, shiftConfigs, companyHolidays }, 
+      { testStrings, locations, shiftConfigs, companyHolidays, hideWeekends }, 
       { upsert: true, new: true }
     );
     res.json(updated);

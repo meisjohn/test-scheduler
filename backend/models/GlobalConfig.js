@@ -11,7 +11,8 @@ const GlobalConfigSchema = new mongoose.Schema({
       { name: "Day Shift", startTime: "08:00", endTime: "16:00" },
       { name: "Night Shift", startTime: "16:00", endTime: "00:00" }
     ] 
-  }
+  },
+  hideWeekends: { type: Boolean, default: false }
 });
 
 module.exports = mongoose.model('GlobalConfig', GlobalConfigSchema);
