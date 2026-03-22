@@ -2,40 +2,31 @@ const express = require('express');
 const router = express.Router();
 const Activity = require('../models/Activity');
 const Config = require('../models/Config');
+const GlobalConfig = require('../models/GlobalConfig');
 
 // 1. GET everything for a specific week (Activities + Config)
 router.get('/:week', async (req, res) => {
   try {
     const weekId = req.params.week;
-    
-    // Get Activities (Global Backlog + Current Week)
-    const activities = await Activity.find({
-      $or: [
-        { weekIdentifier: weekId },
-        { status: 'staged' }
-      ]
-    });
-
+    const activities = await Activity.find({ $or: [{ weekIdentifier: weekId }, { status: 'staged' }] });
     let config = await Config.findOne({ weekIdentifier: weekId });
     
     if (!config) {
-      // Create new with all defaults from the model
-      config = await Config.create({ weekIdentifier: weekId });
-    } else {
-      // REPAIR: If an old config exists but is missing new fields
-      let needsSaving = false;
-      if (config.isLocked === undefined) { config.isLocked = false; needsSaving = true; }
-      if (config.notes === undefined) { config.notes = ""; needsSaving = true; }
-      if (config.externalDocUrl === undefined) { config.externalDocUrl = ""; needsSaving = true; }
-      
-      if (needsSaving) await config.save();
+      // Look for Global Template first
+      let global = await GlobalConfig.findOne();
+      if (!global) {
+        global = await GlobalConfig.create({}); // Create first-time defaults
+      }
+      // Create week config BASED ON Global Template
+      config = await Config.create({ 
+        weekIdentifier: weekId,
+        testStrings: global.testStrings,
+        locations: global.locations,
+        shiftConfigs: global.shiftConfigs
+      });
     }
-    
     res.json({ activities, config });
-  } catch (err) {
-    console.error("[Backend Error]", err);
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 2. CREATE a new staged objective (Supports both Backlog and Direct-to-Grid)
@@ -144,6 +135,13 @@ router.put('/config/:week', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+router.put('/global/config', async (req, res) => {
+  try {
+    const updated = await GlobalConfig.findOneAndUpdate({}, req.body, { upsert: true, new: true });
+    res.json(updated);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;
