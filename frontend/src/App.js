@@ -30,6 +30,7 @@ function App() {
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [placingActivity, setPlacingActivity] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [newTitle, setNewTitle] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [currentWeek, setCurrentWeek] = useState(getInitialWeek());
@@ -392,35 +393,48 @@ const exportSystemData = async () => {
 
       {/* SIDEBAR */}
       <div 
-        className={`w-80 bg-slate-800 border-r border-slate-700 p-4 flex flex-col shadow-2xl z-20 overflow-hidden transition-all relative ${placingActivity?.status === 'scheduled' ? 'bg-slate-750 ring-2 ring-yellow-500/20' : ''}`}
+        className={`${isSidebarOpen ? 'w-80 p-4' : 'w-12 py-4 items-center'} bg-slate-800 border-r border-slate-700 flex flex-col shadow-2xl z-20 overflow-hidden transition-all relative ${placingActivity?.status === 'scheduled' ? 'bg-slate-750 ring-2 ring-yellow-500/20' : ''}`}
         onClick={() => { if (placingActivity?.status === 'scheduled') unstageItem(placingActivity._id); }}
       >
-        {placingActivity?.status === 'scheduled' && (
-            <div className="absolute inset-0 bg-yellow-500/5 z-50 pointer-events-auto flex items-center justify-center">
-                <div className="bg-yellow-500 text-slate-900 px-4 py-2 rounded-full font-black text-[10px] animate-pulse uppercase">Drop to Unstage</div>
-            </div>
-        )}
-
-        <div className="flex justify-between items-center mb-4" onClick={(e) => e.stopPropagation()}>
-          <h2 className="font-black text-xl italic tracking-tighter uppercase">Planning</h2>
-          <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 hover:bg-slate-700 rounded-full text-slate-400">
-            <Settings size={20} className={isSettingsOpen ? "text-blue-400" : ""} />
+        {!isSidebarOpen && (
+          <button onClick={(e) => { e.stopPropagation(); setIsSidebarOpen(true); }} className="p-2 hover:bg-slate-700 rounded-full text-slate-400">
+            <ChevronRight size={20} />
           </button>
-        </div>
-
-        <div className="relative mb-4" onClick={(e) => e.stopPropagation()}>
-          <Search size={14} className="absolute left-3 top-3 text-slate-500" />
-          <input className="w-full bg-slate-900 border border-slate-700 p-2 pl-9 rounded text-xs outline-none" placeholder="Search backlog..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-        </div>
-
-        {!config.isLocked && (
-          <form onSubmit={handleAddActivity} className="mb-6" onClick={(e) => e.stopPropagation()}>
-            <input className="w-full bg-slate-700 border border-slate-600 p-2 rounded text-sm mb-2 outline-none" placeholder="Add test..." value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
-            <button type="submit" className="w-full bg-blue-600 p-2 rounded text-sm font-black transition uppercase">+ Stage</button>
-          </form>
         )}
 
-        <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar" onClick={(e) => e.stopPropagation()}>
+        {isSidebarOpen && (
+          <>
+            {placingActivity?.status === 'scheduled' && (
+                <div className="absolute inset-0 bg-yellow-500/5 z-50 pointer-events-auto flex items-center justify-center">
+                    <div className="bg-yellow-500 text-slate-900 px-4 py-2 rounded-full font-black text-[10px] animate-pulse uppercase">Drop to Unstage</div>
+                </div>
+            )}
+
+            <div className="flex justify-between items-center mb-4" onClick={(e) => e.stopPropagation()}>
+              <h2 className="font-black text-xl italic tracking-tighter uppercase">Planning</h2>
+              <div className="flex items-center gap-1">
+                <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 hover:bg-slate-700 rounded-full text-slate-400">
+                  <Settings size={20} className={isSettingsOpen ? "text-blue-400" : ""} />
+                </button>
+                <button onClick={() => setIsSidebarOpen(false)} className="p-2 hover:bg-slate-700 rounded-full text-slate-400">
+                  <ChevronLeft size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div className="relative mb-4" onClick={(e) => e.stopPropagation()}>
+              <Search size={14} className="absolute left-3 top-3 text-slate-500" />
+              <input className="w-full bg-slate-900 border border-slate-700 p-2 pl-9 rounded text-xs outline-none" placeholder="Search backlog..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            </div>
+
+            {!config.isLocked && (
+              <form onSubmit={handleAddActivity} className="mb-6" onClick={(e) => e.stopPropagation()}>
+                <input className="w-full bg-slate-700 border border-slate-600 p-2 rounded text-sm mb-2 outline-none" placeholder="Add test..." value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
+                <button type="submit" className="w-full bg-blue-600 p-2 rounded text-sm font-black transition uppercase">+ Stage</button>
+              </form>
+            )}
+
+            <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar" onClick={(e) => e.stopPropagation()}>
           {filteredBacklog.map(act => (
             <div 
               key={act._id} 
@@ -448,7 +462,9 @@ const exportSystemData = async () => {
               <div className="mt-2 flex items-center gap-1 text-[9px] font-black uppercase text-slate-500"><MapPin size={10} /> {act.location}</div>
             </div>
           ))}
-        </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* MAIN CONTENT */}
