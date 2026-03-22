@@ -14,6 +14,11 @@ const BACKEND_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 const socket = io(BACKEND_URL);
 
 const getInitialWeek = () => {
+  // Check URL params first
+  const params = new URLSearchParams(window.location.search);
+  const weekParam = params.get('week');
+  if (weekParam) return weekParam;
+
   const now = new Date();
   const target = new Date(now.valueOf());
   const dayNr = (now.getDay() + 6) % 7;
@@ -201,6 +206,13 @@ function App() {
       link.href = canvas.toDataURL();
       link.click();
     } catch (err) { console.error("Export PNG failed", err); }
+  };
+
+  const copyWeekLink = (e) => {
+      const url = `${window.location.origin}${window.location.pathname}?week=${currentWeek}`;
+      navigator.clipboard.writeText(url);
+      setCopyFeedback({ visible: true, x: e.clientX, y: e.clientY });
+      setTimeout(() => setCopyFeedback(prev => ({ ...prev, visible: false })), 1000);
   };
 
   const copyImageToClipboard = async (e) => {
@@ -528,6 +540,9 @@ const exportSystemData = async () => {
                     }} className="p-2 hover:bg-slate-800 rounded-full"><ChevronRight size={24}/></button>
                     <button onClick={() => updateConfig({ isLocked: !config.isLocked })} className={`flex items-center gap-2 px-4 py-1.5 rounded-full border text-[10px] font-black uppercase transition-all ${config.isLocked ? 'bg-red-500/10 border-red-500 text-red-500' : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-white'}`}>
                         {config.isLocked ? <Lock size={14}/> : <Unlock size={14}/>} {config.isLocked ? 'Locked' : 'Open'}
+                    </button>
+                    <button onClick={copyWeekLink} className="p-2 hover:bg-slate-800 rounded-full text-slate-500 hover:text-white" title="Copy Week Link">
+                        <LinkIcon size={20} />
                     </button>
                 </div>
                 <div className="flex gap-4">
