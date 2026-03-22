@@ -4,6 +4,7 @@ const GlobalConfigSchema = new mongoose.Schema({
   // We only ever need one document here
   testStrings: { type: [String], default: ["String Alpha", "String Beta"] },
   locations: { type: [String], default: ["Cloud", "Lab", "Field"] },
+  companyHolidays: { type: [{ name: String, month: Number, day: Number }], default: [] },
   shiftConfigs: { 
     type: [{ name: String, startTime: String, endTime: String }], 
     default: [

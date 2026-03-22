@@ -7,6 +7,7 @@ const ConfigSchema = new mongoose.Schema({
     default: ["String One", "String Two", "String Three"] 
   },
   locations: { type: [String], default: ["Cloud", "Lab", "Field"] },
+  companyHolidays: { type: [{ name: String, month: Number, day: Number }], default: [] },
   shiftConfigs: { 
     type: [{
       name: String,

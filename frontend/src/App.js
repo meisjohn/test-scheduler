@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import io from 'socket.io-client';
 import { 
-  Settings, ChevronLeft, ChevronRight, X, Trash2, ArrowLeftCircle, 
+  Settings, ChevronLeft, ChevronRight, X, Trash2, RedoDot, 
   Search, Clock, Calendar, Download, Copy, Edit3, MapPin, 
   Lock, Unlock, FileText, Link as LinkIcon, Save, ExternalLink, Plus 
 } from 'lucide-react';
@@ -31,6 +31,9 @@ function App() {
   const [searchTerm, setSearchTerm] = useState("");
   const [currentWeek, setCurrentWeek] = useState(getInitialWeek());
   const [copyFeedback, setCopyFeedback] = useState({ visible: false, x: 0, y: 0 });
+  const [gridSearchTerm, setGridSearchTerm] = useState("");
+  const [archiveWeeks, setArchiveWeeks] = useState(12); // Default to 3 months
+  const [holidays, setHolidays] = useState([]);
 
   const weekDates = useMemo(() => {
     const [year, week] = currentWeek.split("-W");
@@ -43,7 +46,8 @@ function App() {
       d.setDate(monday.getDate() + offset);
       return {
         label: d.toLocaleDateString('en-US', { weekday: 'short' }),
-        date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        fullDate: new Date(d) // <--- SURGICAL FIX: Ensure this is a Date object
       };
     });
   }, [currentWeek]);
@@ -183,6 +187,191 @@ function App() {
     } catch (err) { console.error(err); }
   };
 
+const exportSystemData = async () => {
+    try {
+      const res = await axios.get('http://localhost:5000/api/activities/system/export');
+      const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.setAttribute("download", `Matrix_Backup_${new Date().toISOString().split('T')[0]}.json`);
+      link.click();
+    } catch (err) { alert("Export failed"); }
+  };
+
+  const importSystemData = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !window.confirm("CRITICAL WARNING: This will DELETE all current data and replace it with this backup. Proceed?")) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const json = JSON.parse(event.target.result);
+        await axios.post('http://localhost:5000/api/activities/system/import', json);
+        alert("System Restore Complete!");
+        window.location.reload(); // Hard refresh to sync everything
+      } catch (err) { alert("Invalid Backup File"); }
+    };
+    reader.readAsText(file);
+  };
+
+  const runArchiveAndPrune = async () => {
+    const confirmMessage = `WARNING: This will DOWNLOAD and then PERMANENTLY DELETE all scheduled activities older than ${archiveWeeks} weeks. This cannot be undone. Proceed?`;
+    if (!window.confirm(confirmMessage)) return;
+
+    try {
+      const res = await axios.post('http://localhost:5000/api/activities/system/archive', {
+        olderThanWeeks: archiveWeeks
+      });
+      
+      // Download the archive file
+      const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.setAttribute("download", `Archive_OlderThan_${archiveWeeks}wks_${new Date().toISOString().split('T')[0]}.json`);
+      link.click();
+
+      alert(`Success! ${res.data.prunedCount} records archived and removed from database.`);
+      fetchData(); // Refresh grid
+    } catch (err) {
+      alert(err.response?.data?.message || "Archive process failed.");
+    }
+  };
+
+  const restoreArchiveData = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const json = JSON.parse(event.target.result);
+        const res = await axios.post('http://localhost:5000/api/activities/system/restore-archive', json);
+        alert(`Restore Successful!\nMerged ${res.data.activitiesRestored} activities and ${res.data.configsRestored} week configs.`);
+        fetchData(); // Refresh current view
+      } catch (err) {
+        alert("Restore Failed: Invalid archive format.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        // 1. Close Modals/Sidebars first
+        if (selectedActivity) {
+          setSelectedActivity(null);
+          return;
+        }
+        if (isSettingsOpen) {
+          setIsSettingsOpen(false);
+          return;
+        }
+
+        // 2. Cancel Placement/Move Mode
+        if (placingActivity) {
+          setPlacingActivity(null);
+          return;
+        }
+
+        // 3. Clear Filters (Backlog Search then Grid Search)
+        if (searchTerm !== "") {
+          setSearchTerm("");
+        }
+        if (gridSearchTerm !== "") {
+          setGridSearchTerm("");
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    // Cleanup the listener when the component unmounts
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedActivity, isSettingsOpen, placingActivity, searchTerm, gridSearchTerm]);
+
+  const PALETTE = [
+    'bg-blue-600 border-blue-400',
+    'bg-emerald-600 border-emerald-400',
+    'bg-purple-600 border-purple-400',
+    'bg-orange-600 border-orange-400',
+    'bg-pink-600 border-pink-400',
+    'bg-cyan-600 border-cyan-400',
+    'bg-indigo-600 border-indigo-400',
+    'bg-amber-600 border-amber-400',
+    'bg-rose-600 border-rose-400',
+    'bg-lime-600 border-lime-400'
+  ];
+
+  const getLocationColor = (locName) => {
+    if (!locName || locName === 'unassigned') return 'bg-slate-700 border-slate-500';
+    const index = config.locations.indexOf(locName);
+    // use modulo (%) so if you have 11 locations, it wraps back to the first color
+    return PALETTE[index % PALETTE.length];
+  };
+
+  const checkIsToday = (dateInput) => {
+    if (!dateInput) return false;
+    const today = new Date();
+    // Wrap dateInput in new Date() to be safe
+    const cellDate = new Date(dateInput); 
+    return today.toDateString() === cellDate.toDateString();
+  };
+
+  useEffect(() => {
+    const fetchHolidays = async () => {
+      try {
+        const year = currentWeek.split('-')[0];
+        const res = await axios.get(`https://date.nager.at/api/v3/PublicHolidays/${year}/US`);
+        setHolidays(res.data);
+      } catch (err) { console.error("Holiday fetch failed"); }
+    };
+    fetchHolidays();
+  }, [currentWeek]);
+
+  // Helper to check for a holiday on a specific date
+  const getHoliday = (dateObj) => {
+    if (!dateObj) return null;
+    const year = dateObj.getFullYear();
+    const month = dateObj.getMonth();
+    const day = dateObj.getDate();
+    const dayOfWeek = dateObj.getDay();
+
+    // 1. Check COMPANY HOLIDAYS first (from config)
+    // Format in config: [{ name: "Company Picnic", month: 5, day: 15 }]
+    const companyHoliday = config?.companyHolidays?.find(h => 
+      parseInt(h.month) === month && parseInt(h.day) === day
+    );
+    if (companyHoliday) return { name: companyHoliday.name, isCompany: true };
+
+    // 2. Mathematical Federal Rules (Priority)
+    const getNthWeekday = (y, m, dw, n) => {
+      let count = 0, d = n > 0 ? new Date(y, m, 1) : new Date(y, m + 1, 0);
+      while (count < Math.abs(n)) {
+        if (d.getDay() === dw) count++;
+        if (count < Math.abs(n)) n > 0 ? d.setDate(d.getDate() + 1) : d.setDate(d.getDate() - 1);
+      }
+      return d.getDate();
+    };
+
+    if (month === 4 && dayOfWeek === 1 && day === getNthWeekday(year, 4, 1, -1)) return { name: "Memorial Day" };
+    if (month === 6 && day === 4) return { name: "Independence Day" };
+    if (month === 8 && dayOfWeek === 1 && day === getNthWeekday(year, 8, 1, 1)) return { name: "Labor Day" };
+    if (month === 10 && dayOfWeek === 4 && day === getNthWeekday(year, 10, 4, 4)) return { name: "Thanksgiving" };
+
+    // 3. API Fallback (with "Observed" safety)
+    const found = holidays.find(h => {
+      const hDate = new Date(h.date + "T00:00:00");
+      return hDate.getMonth() === month && hDate.getDate() === day;
+    });
+
+    if (found) {
+      // If API finds a holiday on a day that ISN'T our fixed math day, it's Observed.
+      const isObserved = (found.name.includes("Independence") && day !== 4);
+      return { ...found, name: isObserved ? `${found.name} (Observed)` : found.name };
+    }
+    return null;
+  };
+
   if (!config) return <div className="p-20 bg-slate-900 h-screen text-white font-mono text-center">Initializing Matrix...</div>;
 
   return (
@@ -235,8 +424,9 @@ function App() {
               title={`Lead: ${act.lead || 'None'}\nLocation: ${act.location}\nPlan: ${act.testPlan || 'No details'}\nDoc URL: ${act.docUrl || 'None'}`}
               onClick={(e) => { e.stopPropagation(); setPlacingActivity(placingActivity?._id === act._id ? null : act); }}
               onDoubleClick={() => setSelectedActivity(act)}
-              className={`p-3 border-2 rounded-lg cursor-pointer transition-all relative group ${placingActivity?._id === act._id ? 'border-yellow-400 bg-yellow-400/10 scale-105 shadow-lg' : 'border-slate-700 bg-slate-750 hover:border-slate-500'}`}
-            >
+              className={`p-2 rounded shadow-lg text-[10px] mb-1.5 cursor-pointer border transition-all relative group 
+                ${placingActivity?._id === act._id ? 'bg-yellow-500 border-yellow-400 text-slate-900 scale-105' : `${getLocationColor(act.location)} text-white`}`}
+              >
               <div className="flex justify-between items-start">
                 <p className="font-bold text-sm leading-tight pr-6">{act.title}</p>
 
@@ -270,7 +460,7 @@ function App() {
                     }} className="p-2 hover:bg-slate-800 rounded-full"><ChevronLeft size={24}/></button>
                     <div className="flex flex-col items-center">
                         <h1 className="text-2xl font-black italic tracking-tighter uppercase leading-none">WEEK {currentWeek.split('-W')[1]}</h1>
-                        <button onClick={() => setCurrentWeek(getInitialWeek())} className="text-[10px] font-black text-blue-500 uppercase mt-1 tracking-widest hover:text-white">Today</button>
+                        <button onClick={() => setCurrentWeek(getInitialWeek())} className="flex items-center gap-2 px-4 py-1.5 rounded-full border text-[10px] font-black text-blue-500 uppercase mt-1 tracking-widest hover:text-white"><RedoDot size={14}/><span> Today</span></button>
                     </div>
                     <button onClick={() => {
                         const [year, week] = currentWeek.split("-W").map(Number);
@@ -282,6 +472,21 @@ function App() {
                     </button>
                 </div>
                 <div className="flex gap-4">
+                    <div className="relative group">
+                        <Search size={14} className={`absolute left-3 top-2.5 ${gridSearchTerm ? 'text-blue-400' : 'text-slate-500'}`} />
+                        <input 
+                            className={`bg-slate-800 border h-9 pl-9 pr-12 rounded-lg text-xs outline-none transition-all w-44 focus:w-64 ${gridSearchTerm ? 'border-blue-500 ring-1 ring-blue-500/20' : 'border-slate-700'}`}
+                            placeholder="Filter grid..." 
+                            value={gridSearchTerm} 
+                            onChange={(e) => setGridSearchTerm(e.target.value)} 
+                        />
+                        {gridSearchTerm && (
+                            <div className="absolute right-2 top-2 flex items-center gap-1">
+                                <span className="text-[8px] font-black text-slate-600 bg-slate-900 px-1 rounded border border-slate-700">ESC</span>
+                                <button onClick={() => setGridSearchTerm("")} className="text-slate-500 hover:text-white"><X size={14} /></button>
+                            </div>
+                        )}
+                    </div>
                     <button onClick={exportToCSV} className="bg-slate-800 border border-slate-700 px-4 py-2 rounded-lg text-xs font-black uppercase hover:bg-slate-700">Export CSV</button>
                     {placingActivity && (
                         <div className="flex items-center gap-2">
@@ -312,16 +517,30 @@ function App() {
 
           <main className={`flex-1 overflow-auto p-6 ${config.isLocked ? 'grayscale-[0.2]' : ''}`}>
              <table className="w-full border-separate border-spacing-0 border border-slate-700 bg-slate-800 rounded-xl overflow-hidden shadow-2xl">
-                <thead>
-                    <tr className="bg-slate-950">
-                        <th className="p-4 border-b border-r border-slate-700 text-left text-[10px] font-black text-slate-500 uppercase w-44">Shift / String</th>
-                        {weekDates.map((day, idx) => (
-                            <th key={idx} className="p-4 border-b border-r border-slate-700 text-center">
-                                <div className="text-[10px] font-black text-slate-500 uppercase mb-1">{day.label}</div>
-                                <div className="text-xs font-black text-white">{day.date}</div>
-                            </th>
-                        ))}
-                    </tr>
+              <thead>
+                  <tr className="bg-slate-950">
+                    <th className="p-4 border-b border-r border-slate-700 text-left text-[10px] font-black text-slate-500 uppercase w-44">Shift / String</th>
+                    {weekDates.map((day, idx) => {
+                      const isToday = checkIsToday(day.date);
+                      const holiday = getHoliday(day.fullDate); // Pass the full Date object here
+                      return (
+                        <th key={idx} className={`p-4 border-b border-r border-slate-700 text-center transition-colors 
+                          ${isToday ? 'bg-blue-500/10' : ''} 
+                          ${holiday ? 'bg-orange-500/10' : ''}`}>
+                          <div className={`text-[10px] font-black uppercase mb-1 
+                            ${isToday ? 'text-blue-400' : holiday ? 'text-orange-400' : 'text-slate-500'}`}>
+                            {day.label} {isToday && "• TODAY"}
+                          </div>
+                          <div className="text-xs font-black text-white">{day.date}</div>
+                          {holiday && (
+                            <div className="text-[8px] font-black text-orange-400 uppercase mt-1 truncate w-32 mx-auto" title={holiday.name}>
+                              {holiday.name}
+                            </div>
+                          )}
+                        </th>
+                      );
+                    })}
+                  </tr>
                 </thead>
                 <tbody>
                 {config.shiftConfigs.map((shift, sIdx) => (
@@ -332,54 +551,71 @@ function App() {
                         </td>
                     </tr>
                     {config.testStrings.map(stringName => (
-                        <tr key={`${stringName}-${sIdx}`} className="group hover:bg-slate-750/30 transition-colors">
-                        <td className="p-4 border-r border-b border-slate-700 bg-slate-850/30">
+                        <tr key={`${stringName}-${sIdx}`} className="group hover:bg-slate-750/30">
+                        <td className="p-4 border-r border-b border-slate-700 bg-slate-850/30 text-[10px] font-black text-slate-300 uppercase leading-none">
                             <div className="text-[10px] font-black text-slate-300 uppercase leading-none">{stringName}</div>
                         </td>
-                        {[0, 1, 2, 3, 4, 5, 6].map(dayIdx => (
-                            <td key={dayIdx} 
-                                className={`border-r border-b border-slate-700 p-2 h-28 w-48 align-top transition-all relative ${placingActivity && !config.isLocked ? 'bg-blue-600/10 cursor-crosshair hover:bg-blue-600/30' : 'bg-transparent hover:bg-slate-700/20'}`}
-                                onClick={() => { 
-                                    if (placingActivity && !config.isLocked) { 
-                                        moveActivity(placingActivity._id, { status: 'scheduled', testString: stringName, shift: sIdx + 1, order: dayIdx }); 
-                                        setPlacingActivity(null); 
-                                    } else if (!placingActivity && !config.isLocked) {
-                                        createActivityDirect(stringName, sIdx, dayIdx);
-                                    }
-                                }}
-                            >
-                            {!placingActivity && !config.isLocked && (
-                                <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity pointer-events-none">
-                                    <Plus size={20} className="text-slate-600" />
-                                </div>
-                            )}
-                            {activities.filter(a => a.testString === stringName && a.shift === (sIdx + 1) && a.order === dayIdx).map(act => (
-                                <div 
-                                key={act._id} 
-                                title={`Lead: ${act.lead || 'None'}\nLocation: ${act.location}\nPlan: ${act.testPlan || 'No details'}\nDoc URL: ${act.docUrl || 'None'}`}
-                                onClick={(e) => { e.stopPropagation(); if(!config.isLocked) setPlacingActivity(placingActivity?._id === act._id ? null : act); }} 
-                                onDoubleClick={(e) => { e.stopPropagation(); setSelectedActivity(act); }}
-                                className={`p-2 rounded shadow-lg text-[10px] mb-1.5 cursor-pointer border transition-all relative group ${placingActivity?._id === act._id ? 'bg-yellow-500 border-yellow-400 text-slate-900' : 'bg-blue-700 border-blue-500 text-white hover:border-blue-300'}`}
+                        {[0, 1, 2, 3, 4, 5, 6].map(dayIdx => {
+                            const isToday = checkIsToday(weekDates[dayIdx]?.fullDate);
+                            const isHoliday = getHoliday(weekDates[dayIdx]?.fullDate);
+                            return (
+                                <td
+                                 key={dayIdx} 
+                                 className={`border-r border-b border-slate-700 p-2 h-28 w-48 align-top relative transition-all 
+                                             ${isToday ? 'bg-blue-500/5' : ''}
+                                             ${isHoliday ? 'bg-orange-500/5' : ''}
+                                             ${placingActivity && !config.isLocked ? 'hover:bg-blue-600/20 cursor-crosshair' : ''}`}
+                                 onClick={() => { 
+                                      if (placingActivity && !config.isLocked) { 
+                                            moveActivity(placingActivity._id, { status: 'scheduled', testString: stringName, shift: sIdx + 1, order: dayIdx }); 
+                                            setPlacingActivity(null); 
+                                      } else if (!placingActivity && !config.isLocked) {
+                                            createActivityDirect(stringName, sIdx, dayIdx);
+                                      }
+                                    }}
                                 >
-                                    {/* HOVER ACTIONS (Overlays static icons when moused over) */}
-                                    <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-blue-800 rounded pl-1 shadow-md">
-                                        {act.docUrl && (
-                                            <a href={act.docUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-white/80 hover:text-white p-0.5">
-                                            <ExternalLink size={12} />
-                                            </a>
-                                        )}
-                                        <button onClick={(e) => { e.stopPropagation(); copyActivity(act, e); }} className="hover:text-yellow-400 p-0.5"><Copy size={10}/></button>
-                                        {!config.isLocked && <button onClick={(e) => { e.stopPropagation(); unstageItem(act._id); }} className="hover:text-orange-400 p-0.5"><X size={10}/></button>}
+                                {!placingActivity && !config.isLocked && 
+                                  <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity pointer-events-none">
+                                    <Plus size={20} className="text-slate-600" />
+                                  </div>
+                                }
+                                {activities
+                                  .filter(a => 
+                                    a.testString === stringName && 
+                                    a.shift === (sIdx + 1) && 
+                                    a.order === dayIdx &&
+                                    (a.title.toLowerCase().includes(gridSearchTerm.toLowerCase()) || 
+                                     (a.lead && a.lead.toLowerCase().includes(gridSearchTerm.toLowerCase())) ||
+                                     (a.location && a.location.toLowerCase().includes(gridSearchTerm.toLowerCase())))
+                                  )
+                                  .map(act => (
+                                    <div 
+                                    key={act._id} 
+                                    title={`Lead: ${act.lead || 'None'}\nLocation: ${act.location}\nPlan: ${act.testPlan || 'No details'}\nDoc URL: ${act.docUrl || 'None'}`}
+                                    onClick={(e) => { e.stopPropagation(); if(!config.isLocked) setPlacingActivity(placingActivity?._id === act._id ? null : act); }} 
+                                    onDoubleClick={(e) => { e.stopPropagation(); setSelectedActivity(act); }}
+                                    className={`p-2 rounded shadow-lg text-[10px] mb-1.5 cursor-pointer border transition-all relative group ${placingActivity?._id === act._id ? 'bg-yellow-500 border-yellow-400 text-slate-900' : `${getLocationColor(act.location)} text-white`}`}
+                                    >
+                                        {/* HOVER ACTIONS (Overlays static icons when moused over) */}
+                                        <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-blue-800 rounded pl-1 shadow-md">
+                                            {act.docUrl && (
+                                                <a href={act.docUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-white/80 hover:text-white p-0.5">
+                                                <ExternalLink size={12} />
+                                                </a>
+                                            )}
+                                            <button onClick={(e) => { e.stopPropagation(); copyActivity(act, e); }} className="hover:text-yellow-400 p-0.5"><Copy size={10}/></button>
+                                            {!config.isLocked && <button onClick={(e) => { e.stopPropagation(); unstageItem(act._id); }} className="hover:text-orange-400 p-0.5"><X size={10}/></button>}
+                                        </div>
+                                        <div className="font-bold truncate pr-4">{act.title}</div>
+                                        <div className="flex justify-between items-center mt-1 text-[8px] font-black uppercase opacity-70">
+                                            <span>{act.lead || 'TBD'}</span>
+                                            <span className="bg-black/20 px-1 rounded">{act.location}</span>
+                                        </div>
                                     </div>
-                                    <div className="font-bold truncate pr-4">{act.title}</div>
-                                    <div className="flex justify-between items-center mt-1 text-[8px] font-black uppercase opacity-70">
-                                        <span>{act.lead || 'TBD'}</span>
-                                        <span className="bg-black/20 px-1 rounded">{act.location}</span>
-                                    </div>
-                                </div>
-                            ))}
-                            </td>
-                        ))}
+                                ))}
+                                </td>
+                            );
+                        })}
                         </tr>
                     ))}
                     </React.Fragment>
@@ -513,6 +749,86 @@ function App() {
                 </button>
               </section>
             </div>
+            <section className="border-t border-slate-700 pt-6">
+              <div className="flex justify-between items-center mb-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase">Company Holidays</label>
+                <button 
+                  onClick={() => updateConfig({ companyHolidays: [...(config.companyHolidays || []), { name: "New Holiday", month: 0, day: 1 }] })}
+                  className="text-[10px] font-black text-blue-400 tracking-widest">+ ADD</button>
+              </div>
+              {(config.companyHolidays || []).map((h, i) => (
+                <div key={i} className="flex gap-1 mb-2">
+                  <input className="flex-1 bg-slate-900 border border-slate-700 p-1 rounded text-[10px] text-white outline-none" 
+                    value={h.name} onChange={(e) => {
+                      const next = [...config.companyHolidays]; next[i].name = e.target.value; setConfig({...config, companyHolidays: next});
+                    }} onBlur={() => updateConfig({ companyHolidays: config.companyHolidays })} />
+                  <select className="bg-slate-900 border border-slate-700 p-1 rounded text-[10px] text-white outline-none"
+                    value={h.month} onChange={(e) => {
+                      const next = [...config.companyHolidays]; next[i].month = e.target.value; setConfig({...config, companyHolidays: next});
+                    }} onBlur={() => updateConfig({ companyHolidays: config.companyHolidays })}>
+                    {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, mi) => <option key={mi} value={mi}>{m}</option>)}
+                  </select>
+                  <input type="number" className="w-10 bg-slate-900 border border-slate-700 p-1 rounded text-[10px] text-white outline-none text-center" 
+                    value={h.day} onChange={(e) => {
+                      const next = [...config.companyHolidays]; next[i].day = e.target.value; setConfig({...config, companyHolidays: next});
+                    }} onBlur={() => updateConfig({ companyHolidays: config.companyHolidays })} />
+                  <button className="text-slate-600 hover:text-red-500" onClick={() => updateConfig({ companyHolidays: config.companyHolidays.filter((_, idx) => idx !== i) })}><Trash2 size={12}/></button>
+                </div>
+              ))}
+            </section>
+            <section className="border-t border-slate-700 pt-6 mt-10">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-4">System Maintenance</label>
+                <div className="flex flex-col gap-2">
+                    <button onClick={exportSystemData} className="w-full bg-slate-700 hover:bg-slate-600 py-2 rounded font-black text-[10px] uppercase flex items-center justify-center gap-2 transition">
+                        <Download size={14}/> Export System Backup (.json)
+                    </button>
+                    
+                    <label className="w-full bg-slate-900 border border-slate-700 hover:border-blue-500 py-2 rounded font-black text-[10px] uppercase flex items-center justify-center gap-2 cursor-pointer transition text-slate-400">
+                        <Save size={14}/> Import System Backup
+                        <input type="file" className="hidden" accept=".json" onChange={importSystemData} />
+                    </label>
+                </div>
+            </section>
+            <section className="border-t border-red-900/30 pt-6 mt-6 bg-red-900/5 p-4 rounded-lg">
+                <label className="text-[10px] font-black text-red-500 uppercase tracking-widest block mb-2">Prune & Archive</label>
+                <p className="text-[9px] text-slate-500 uppercase mb-4 leading-tight">
+                  Move old scheduled tests to a JSON file and delete them from the live database.
+                </p>
+                
+                <div className="flex items-center gap-2 mb-3">
+                    <span className="text-[10px] text-slate-400 uppercase font-black whitespace-nowrap">Older than</span>
+                    <input 
+                        type="number" 
+                        className="w-16 bg-slate-900 border border-slate-700 rounded p-1 text-xs text-center text-white outline-none focus:border-red-500"
+                        value={archiveWeeks}
+                        onChange={(e) => setArchiveWeeks(e.target.value)}
+                    />
+                    <span className="text-[10px] text-slate-400 uppercase font-black">Weeks</span>
+                </div>
+
+                <button 
+                    onClick={runArchiveAndPrune}
+                    className="w-full bg-red-600/10 text-red-500 border border-red-600/30 py-2 rounded font-black text-[10px] uppercase hover:bg-red-600 hover:text-white transition tracking-widest flex items-center justify-center gap-2"
+                >
+                    <FileText size={14}/> Run Archive & Prune
+                </button>
+            </section>
+            <section className="border-t border-red-900/30 pt-6 mt-6 bg-red-900/5 p-4 rounded-lg">
+                <label className="text-[10px] font-black text-red-500 uppercase tracking-widest block mb-2">Prune & Archive</label>
+                <p className="text-[9px] text-slate-500 uppercase mb-4 leading-tight">
+                  Manage long-term storage by moving old data to local files.
+                </p>
+                
+                <div className="mt-4 pt-4 border-t border-red-900/20">
+                    <label className="w-full bg-slate-800 border border-slate-700 hover:border-blue-500 py-2 rounded font-black text-[10px] uppercase flex items-center justify-center gap-2 cursor-pointer transition text-blue-400">
+                        <Edit3 size={14}/> Restore from Archive File
+                        <input type="file" className="hidden" accept=".json" onChange={restoreArchiveData} />
+                    </label>
+                    <p className="text-[8px] text-slate-500 uppercase mt-2 text-center">
+                      Note: This merges data into your current database without overwriting global settings.
+                    </p>
+                </div>
+            </section>
           </div>
       )}
     </div>

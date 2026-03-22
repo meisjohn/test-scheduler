@@ -22,7 +22,8 @@ router.get('/:week', async (req, res) => {
         weekIdentifier: weekId,
         testStrings: global.testStrings,
         locations: global.locations,
-        shiftConfigs: global.shiftConfigs
+        shiftConfigs: global.shiftConfigs,
+        companyHolidays: global.companyHolidays
       });
     }
     res.json({ activities, config });
@@ -139,9 +140,136 @@ router.put('/config/:week', async (req, res) => {
 
 router.put('/global/config', async (req, res) => {
   try {
-    const updated = await GlobalConfig.findOneAndUpdate({}, req.body, { upsert: true, new: true });
+    // Destructure companyHolidays from the request body
+    const { testStrings, locations, shiftConfigs, companyHolidays } = req.body;
+    const updated = await GlobalConfig.findOneAndUpdate(
+      {}, 
+      { testStrings, locations, shiftConfigs, companyHolidays }, 
+      { upsert: true, new: true }
+    );
     res.json(updated);
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// MASTER EXPORT: Download everything as one JSON
+router.get('/system/export', async (req, res) => {
+  try {
+    const activities = await Activity.find({});
+    const configs = await Config.find({});
+    const global = await GlobalConfig.findOne({});
+    
+    res.json({
+      timestamp: new Date().toISOString(),
+      version: "1.2",
+      data: { activities, configs, global }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// MASTER IMPORT: Warning - This wipes the current DB!
+router.post('/system/import', async (req, res) => {
+  try {
+    const { activities, configs, global } = req.body.data;
+
+    // 1. Wipe current collections
+    await Activity.deleteMany({});
+    await Config.deleteMany({});
+    await GlobalConfig.deleteMany({});
+
+    // 2. Insert migrated data
+    if (activities?.length) await Activity.insertMany(activities);
+    if (configs?.length) await Config.insertMany(configs);
+    if (global) await GlobalConfig.create(global);
+
+    res.json({ message: "System Restore Successful" });
+  } catch (err) {
+    res.status(500).json({ error: "Import Failed: " + err.message });
+  }
+});
+
+// ARCHIVE & PRUNE: Download and delete old records
+router.post('/system/archive', async (req, res) => {
+  try {
+    const { olderThanWeeks } = req.body;
+    const now = new Date();
+    const cutoffDate = new Date();
+    cutoffDate.setDate(now.getDate() - (olderThanWeeks * 7));
+
+    // Find all activities created before the cutoff that are NOT in the backlog
+    // We keep 'staged' items because they are global.
+    const query = {
+      createdAt: { $lt: cutoffDate },
+      status: 'scheduled'
+    };
+
+    const activitiesToArchive = await Activity.find(query);
+    
+    if (activitiesToArchive.length === 0) {
+      return res.status(404).json({ message: "No records found older than specified limit." });
+    }
+
+    // Get the unique week identifiers being deleted to archive their configs too
+    const weekIds = [...new Set(activitiesToArchive.map(a => a.weekIdentifier))];
+    const configsToArchive = await Config.find({ weekIdentifier: { $in: weekIds } });
+
+    // Perform the deletion after fetching data for the response
+    await Activity.deleteMany(query);
+    // Optional: Delete configs for those weeks if they are no longer needed
+    // await Config.deleteMany({ weekIdentifier: { $in: weekIds } });
+
+    res.json({
+      archiveDate: new Date().toISOString(),
+      prunedCount: activitiesToArchive.length,
+      data: {
+        activities: activitiesToArchive,
+        configs: configsToArchive
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// RESTORE ARCHIVE: Merges archived data into the current DB
+router.post('/system/restore-archive', async (req, res) => {
+  try {
+    const { activities, configs } = req.body.data;
+    let restoredActivities = 0;
+    let restoredConfigs = 0;
+
+    // 1. Restore Configs (Upsert: Update if exists, Create if not)
+    if (configs && configs.length > 0) {
+      for (const conf of configs) {
+        await Config.findOneAndUpdate(
+          { weekIdentifier: conf.weekIdentifier },
+          conf,
+          { upsert: true }
+        );
+        restoredConfigs++;
+      }
+    }
+
+    // 2. Restore Activities (Only if they don't already exist)
+    if (activities && activities.length > 0) {
+      for (const act of activities) {
+        const exists = await Activity.findById(act._id);
+        if (!exists) {
+          await Activity.create(act);
+          restoredActivities++;
+        }
+      }
+    }
+
+    res.json({ 
+      message: "Restore Complete", 
+      activitiesRestored: restoredActivities,
+      configsRestored: restoredConfigs 
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Restore Failed: " + err.message });
+  }
 });
 
 module.exports = router;
