@@ -38,18 +38,22 @@ router.get('/:week', async (req, res) => {
   }
 });
 
-// 2. CREATE a new staged objective
+// 2. CREATE a new staged objective (Supports both Backlog and Direct-to-Grid)
 router.post('/', async (req, res) => {
-  const activity = new Activity({
-    title: req.body.title,
-    status: 'staged',
-    // We explicitly DON'T set weekIdentifier here so it's global
-    location: 'unassigned',
-    lead: '',
-    testPlan: ''
-  });
-  
   try {
+    const activity = new Activity({
+      title: req.body.title,
+      status: req.body.status || 'staged', // Respect 'scheduled' if sent
+      weekIdentifier: req.body.weekIdentifier,
+      testString: req.body.testString,
+      shift: req.body.shift,
+      order: req.body.order,
+      location: req.body.location || 'unassigned',
+      lead: req.body.lead || '',
+      testPlan: req.body.testPlan || '',
+      docUrl: req.body.docUrl || ''
+    });
+
     const newActivity = await activity.save();
     res.status(201).json(newActivity);
   } catch (err) {
@@ -79,6 +83,22 @@ router.delete('/:id', async (req, res) => {
     res.json({ message: "Activity deleted" });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+// Delete a week's configuration
+router.delete('/config/:week', async (req, res) => {
+  try {
+    const weekId = req.params.week;
+    await Config.findOneAndDelete({ weekIdentifier: weekId });
+    // Optional: Unstage all activities for this week so they aren't "lost"
+    await Activity.updateMany(
+      { weekIdentifier: weekId },
+      { status: 'staged', weekIdentifier: null, testString: null, shift: null, order: null }
+    );
+    res.json({ message: "Week configuration reset and activities unstaged" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
