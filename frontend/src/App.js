@@ -8,7 +8,7 @@ import {
   Lock, Unlock, FileText, Link as LinkIcon, Save, ExternalLink, Plus 
 } from 'lucide-react';
 
-const BACKEND_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const BACKEND_URL = process.env.REACT_APP_API_URL !== undefined ? process.env.REACT_APP_API_URL : 'http://localhost:5000';
 
 
 const socket = io(BACKEND_URL);
@@ -210,13 +210,39 @@ function App() {
 
   const copyWeekLink = (e) => {
       const url = `${window.location.origin}${window.location.pathname}?week=${currentWeek}`;
-      navigator.clipboard.writeText(url);
-      setCopyFeedback({ visible: true, x: e.clientX, y: e.clientY });
-      setTimeout(() => setCopyFeedback(prev => ({ ...prev, visible: false })), 1000);
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => {
+          setCopyFeedback({ visible: true, x: e.clientX, y: e.clientY });
+          setTimeout(() => setCopyFeedback(prev => ({ ...prev, visible: false })), 1000);
+        }).catch(err => console.error("Clipboard failed:", err));
+      } else {
+        // Fallback for non-secure contexts (HTTP)
+        const textarea = document.createElement("textarea");
+        textarea.value = url;
+        textarea.style.position = "fixed"; // Prevent scrolling
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        try {
+          document.execCommand('copy');
+          setCopyFeedback({ visible: true, x: e.clientX, y: e.clientY });
+          setTimeout(() => setCopyFeedback(prev => ({ ...prev, visible: false })), 1000);
+        } catch (err) {
+          console.error("Fallback copy failed:", err);
+          alert("Could not copy link to clipboard.");
+        }
+        document.body.removeChild(textarea);
+      }
   };
 
   const copyImageToClipboard = async (e) => {
      if (!gridRef.current) return;
+     // Image copying requires HTTPS/Secure Context in modern browsers
+     if (!navigator.clipboard || !navigator.clipboard.write) {
+       alert("Copying images to clipboard requires a secure context (HTTPS). Please use 'Export PNG' instead.");
+       return;
+     }
      const x = e.clientX;
      const y = e.clientY;
      try {
@@ -226,9 +252,10 @@ function App() {
          scrollX: 0, scrollY: 0
        });
        canvas.toBlob(blob => {
-         navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-         setCopyFeedback({ visible: true, x, y });
-         setTimeout(() => setCopyFeedback(prev => ({ ...prev, visible: false })), 1000);
+         navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(() => {
+           setCopyFeedback({ visible: true, x, y });
+           setTimeout(() => setCopyFeedback(prev => ({ ...prev, visible: false })), 1000);
+         }).catch(err => console.error("Clipboard write failed:", err));
        });
      } catch (err) { console.error("Clipboard failed", err); }
   };
